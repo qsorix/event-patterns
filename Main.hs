@@ -117,6 +117,11 @@ starting_later a b | start(a) <   start(b) = b
 all_possible_starts :: [Time] -> [Instance] -> [Time]
 all_possible_starts ts is = filter (/= (-1)) $ union ts (map start is)
 
+latest_preceding :: Time -> [Instance] -> Instance
+latest_preceding t is =
+    let preceding = filter ((< t) . end) is
+    in  maximumBy (compare `on` start) preceding
+
 observe :: Detector -> Instance -> Detector
 observe d [] = d
 
