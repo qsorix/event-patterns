@@ -6,7 +6,10 @@
 -- in simple cases. With this operator I can say A and not B for 3 seconds which
 -- is written as (A .@ 3) .- B
 --
-import List
+module Main where
+
+import Data.List
+import Test.HUnit
 
 type Time     = Int
 type TimeDiff = Int
@@ -107,6 +110,11 @@ makeDetector (TempRestr   j t) = DTempRestr   (makeDetector j) t                
 makeDetector (LastRestr   j t) = DLastRestr   (makeDetector j) t                initialState
 
 
+starting_later :: Instance -> Instance -> Instance
+starting_later a b | start(a) <   start(b) = b
+                | start(a) >=  start(b) = a
+
+
 observe :: Detector -> Instance -> Detector
 observe d [] = d
 
@@ -122,7 +130,7 @@ observe (DDisjunction j k st) ev =
         a_k = (a_i . state) k'
         ss_j = (ss_i . state) j'
         ss_k = (ss_i . state) k'
-        a_i' = if start(a_j) <= start(a_k) then a_k else a_j
+        a_i' = starting_later a_k a_j
         ss_i' = union ss_j ss_k
     in DDisjunction j' k' st{a_i = a_i', ss_i = ss_i'}
 
@@ -131,8 +139,8 @@ observe (DConjunction j k st) ev =
         k' = observe k ev
         a_j = (a_i . state) j'
         a_k = (a_i . state) k'
-        l_i' = if start(l_i st) < start(a_j) then a_j else l_i st
-        r_i' = if start(r_i st) < start(a_k) then a_k else r_i st
+        l_i' = starting_later (l_i st) a_j
+        r_i' = starting_later (r_i st) a_k
         a_i' = if l_i' == [] || r_i' == [] || (a_j == [] && a_k == [])
                  then []
                  else if start a_k <= start a_j then a_j  `iJoin` r_i'
@@ -147,7 +155,7 @@ observe (DNegation j k st) ev =
         k' = observe k ev
         a_j = (a_i . state) j'
         a_k = (a_i . state) k'
-        t_i' = if (t_i st) < start(a_k) then start(a_k) else (t_i st)
+        t_i' = max (t_i st) (start a_k)
         a_i' = if t_i' < start(a_j) then a_j else []
         ss_i' = (ss_i . state) j'
     in DNegation j' k' st{a_i = a_i', ss_i = ss_i', t_i = t_i'}
@@ -166,7 +174,7 @@ observe (DSequence j k st) ev =
 
         qq_i' = foldl union [] $ [map (\t -> foldl (latest_prec t) [] (union (qq_i st) [l_i st])) ss_k]
 
-        l_i' = if start (l_i st) < start a_j then a_j else (l_i st)
+        l_i' = starting_later (l_i st) a_j
         ss_i' = delete (-1) (ss_j `union` map start (union (qq_i') [l_i']))
 
     in (DSequence j' k' st{a_i = a_i', qq_i=qq_i', l_i=l_i', ss_i=ss_i'})
@@ -191,37 +199,22 @@ observe (DLastRestr j dur st) ev@[(cur_t, _)] =
 
         qq_i' = delete a_i' $ filter (\e -> end e >= cur_t - dur) (union (qq_i st) [l_i st])
 
-        l_i' = if start (l_i st) < start a_j then a_j else (l_i st)
+        l_i' = if a_i' /= [] then [] else (if start (l_i st) < start a_j then a_j else (l_i st))
         ss_i' = delete (-1) (ss_j `union` map start (union (qq_i') [l_i']))
 
     in (DLastRestr j' dur st{a_i = a_i', qq_i=qq_i', l_i=l_i', ss_i=ss_i'})
 
 
 
-a = E Alarm
-b = E MouseClick
-c = E KeyPress
-
-
-da    = makeDetector $  a
-dab   = makeDetector $ (a .| b)
-daab  = makeDetector $ (a .+ b)
-dabnc = makeDetector $ (a .+ b) .- c
-
-
-detectE :: EventExpr -> [Instance] -> [Maybe Instance]
-detectE e is = detect (makeDetector e) is
-
-
-detect :: Detector -> [Instance] -> [Maybe Instance]
-detect d is = let d' = scanl observe d is
-              in map (\d'' -> case (a_i . state) d'' of [] -> Nothing; a  -> Just a) d'
+-- detect :: Detector -> [Instance] -> [Maybe Instance]
+-- detect d is = let d' = scanl observe d is
+              -- in map (\d'' -> case (a_i . state) d'' of [] -> Nothing; a  -> Just a) d'
 
 
 -- TODO: now that it works, make it aware of some reaction types and report that
 -- instead of matched event patterns
 data Reaction = R1 | R2 | R3 | R4
-                deriving (Show)
+                deriving (Show, Eq)
 
 detectME :: [(EventExpr, Reaction)] -> [Instance] -> [(Reaction, Instance)]
 detectME es is = let ds = map (\(e, r) -> (makeDetector e, r)) es
@@ -229,6 +222,9 @@ detectME es is = let ds = map (\(e, r) -> (makeDetector e, r)) es
                      ds' = scanl (\dss i -> map (\(d, r) -> (observe d i, r)) dss) ds is
                      ds'' = map (concat . map (\(d, r) -> case (a_i . state) d of [] -> []; a -> [(r, a)])) ds'
                  in concat ds''
+
+justReactions xs = map fst xs
+detectMER es is = justReactions $ (detectME es is)
 
 -- example
 -- detectME [(((E Alarm .& 3) .- (E MouseClick)), R1), (E Alarm, R2)] [[(1, Alarm)], [(5, Tick)], [(7, MouseClick)], [(10, Alarm)]]
@@ -239,3 +235,90 @@ detectME es is = let ds = map (\(e, r) -> (makeDetector e, r)) es
 --        (1,Alarm)]),
 --   (R2,[(10,Alarm)])]
 
+t@@e = [(t, e)]
+
+event_stream0 = [[]]
+event_stream1 = [1@@Alarm, 5@@Tick, 7@@MouseClick, 10@@Alarm]
+event_stream2 = [1@@Alarm, 5@@Tick, 6@@Alarm, 7@@MouseClick, 10@@MouseClick]
+event_stream3 = [1@@Alarm, 5@@Tick, 6@@MouseClick, 7@@Alarm, 10@@MouseClick]
+event_stream4 = [1@@Alarm, 2@@Alarm, 5@@Tick, 6@@MouseClick, 7@@Alarm, 10@@MouseClick]
+event_stream5 = [1@@Alarm, 2@@Alarm, 5@@Tick, 6@@MouseClick]
+
+det1  = [(((E Alarm .& 3) .- (E MouseClick)), R1), (E Alarm, R2)]
+det2  = [((E Alarm .& 3), R1)]
+det3  = [(((E Alarm .& 3) .> E MouseClick), R1)]
+det4  = [((((E Alarm .> E Alarm) .@ 20) .- E MouseClick), R1)]
+det5  = [((((E Alarm .> E Alarm) .@ 20) .- (E Tick .| E MouseClick)), R1)]
+det6  = [((((E Alarm .> E Alarm) .@ 20) .- (E Tick .+ E MouseClick)), R1)]
+det7  = [((((E Alarm .> E Alarm) .@ 20) .- (E MouseClick .+ E Tick)), R1)]
+det8  = [(((E Alarm .+ E Tick) .> E Alarm), R1)]
+det9  = [(((E Alarm .+ E Tick) .> E Alarm) .> E MouseClick, R1)]
+det10 = [((E Alarm .> (E Tick .+ E MouseClick) .> E Alarm), R1)]
+det11 = [((E Alarm .> (E Tick .| E MouseClick) .> E Alarm), R1)]
+det12 = [(E Alarm .> ((E Alarm .> E MouseClick) .- E Tick), R1)]
+det13 = [((E Alarm .+ E MouseClick) .@ 3, R1)]
+
+tests_suite1 = TestList
+  [ TestLabel "test1"  $ TestCase (assertEqual "eq" [R2, R1, R2] (detectMER det1 event_stream1))
+  , TestLabel "test2"  $ TestCase (assertEqual "eq" [R1, R1]     (detectMER det2 event_stream2))
+  , TestLabel "test3"  $ TestCase (assertEqual "eq" [R1, R1]     (detectMER det3 event_stream2))
+  , TestLabel "test4"  $ TestCase (assertEqual "eq" [R1]         (detectMER det4 event_stream2))
+  , TestLabel "test5"  $ TestCase (assertEqual "eq" []           (detectMER det5 event_stream2))
+  , TestLabel "test6"  $ TestCase (assertEqual "eq" [R1]         (detectMER det6 event_stream2))
+  , TestLabel "test7"  $ TestCase (assertEqual "eq" []           (detectMER det6 event_stream3))
+  , TestLabel "test8"  $ TestCase (assertEqual "eq" []           (detectMER det7 event_stream3))
+  , TestLabel "test9"  $ TestCase (assertEqual "eq" [R1]         (detectMER det8 event_stream3))
+  , TestLabel "test10" $ TestCase (assertEqual "eq" []           (detectMER det8 event_stream0))
+  , TestLabel "test11" $ TestCase (assertEqual "eq" [R1]         (detectMER det9 event_stream3))
+  , TestLabel "test12" $ TestCase (assertEqual "eq" [R1]         (detectMER det10 event_stream3))
+  , TestLabel "test13" $ TestCase (assertEqual "eq" [(R1, [(7,Alarm),(5,Tick),(6,MouseClick),(2,Alarm)])] (detectME det10 event_stream4))
+  , TestLabel "test14" $ TestCase (assertEqual "eq" [(R1, [(7,Alarm),(5,Tick),(2,Alarm)])]                (detectME det11 event_stream4))
+  , TestLabel "test15" $ TestCase (assertEqual "eq" [(R1,[(10,MouseClick),(7,Alarm),(2,Alarm)])]          (detectME det12 event_stream4))
+  , TestLabel "test16" $ TestCase (assertEqual "eq" []           (detectME det12 event_stream5))
+  , TestLabel "test17" $ TestCase (assertEqual "eq" []           (detectME det13 event_stream5))
+  , TestLabel "test18" $ TestCase (assertEqual "eq" [(R1, [(10,Alarm),(7,MouseClick)])]               (detectME det13 event_stream1))
+  , TestLabel "test19" $ TestCase (assertEqual "eq" [(R1, [(6,Alarm),(1,Alarm)])]                     (detectME det7 event_stream2))
+  , TestLabel "test20" $ TestCase (assertEqual "eq" [(R1, [(2,Alarm),(1,Alarm)])]                     (detectME det5 event_stream4))
+  , TestLabel "test21" $ TestCase (assertEqual "eq" []                                                (detectME det14 event_stream4))
+  ]
+
+
+
+event_stream7 = [1@@Alarm, 2@@MouseClick, 3@@Tick, 4@@Tick, 5@@Tick, 6@@Alarm, 7@@Tick, 8@@Tick,
+                 10@@Tick, 12@@MouseClick, 13@@Tick, 15@@Alarm, 16@@Tick, 17@@Alarm, 18@@Tick, 19@@Tick, 20@@Tick, 21@@KeyPress]
+
+det14 = [(((E Alarm .& 2) .- E MouseClick) .> ((E Alarm .& 3) .- E KeyPress), R1)]
+det15 = [(((E Alarm .& 3) .- E MouseClick), R1)]
+det16 = [(((E Alarm .& 3) .- E KeyPress), R1)]
+det17 = [((((E Alarm .+ E MouseClick) .@ 2) .- E MouseClick) .> ((E Alarm .@ 3) .- E KeyPress), R1)]
+
+event_stream8 = [1@@MouseClick, 2@@KeyPress, 3@@Alarm, 4@@KeyPress]
+event_stream9 = [1@@MouseClick, 2@@KeyPress, 3@@KeyPress, 4@@Alarm]
+
+det18 = [((E KeyPress .> E KeyPress) .- (E MouseClick .+ E Alarm), R1)]
+det19 = [((E MouseClick .+ E Alarm) .- (E KeyPress .> E KeyPress), R1)]
+
+--det18 = [(((E Alarm .@ 3) .- E MouseClick), R1)]
+--det19 = [(((E Alarm .@ 3) .- E KeyPress), R1)]
+
+
+tests_suite2 = TestList
+  [ TestLabel "test22" $ TestCase (assertEqual "eq" [(R1,[(19,Tick),(15,Alarm),(10,Tick),(6,Alarm)])] (detectME det14 event_stream7))
+  , TestLabel "test23" $ TestCase (assertEqual "eq" [(R1, [(5,Tick),(1,Alarm)]),
+                                                     (R1,[(10,Tick),(6,Alarm)]),
+                                                     (R1, [(19,Tick),(15,Alarm)])]                    (detectME det16 event_stream7))
+  , TestLabel "test24" $ TestCase (assertEqual "eq" [(R1,[(10,Tick),(6,Alarm)]),
+                                                     (R1,[(19,Tick),(15,Alarm)]),
+                                                     (R1,[(21,KeyPress),(17,Alarm)])]                 (detectME det15 event_stream7))
+  , TestLabel "test25" $ TestCase (assertEqual "eq" []                                                (detectME det17 event_stream7))
+  , TestLabel "test26" $ TestCase (assertEqual "eq" [(R1,[(4,KeyPress),(2,KeyPress)])]                (detectME det18 event_stream8))
+  , TestLabel "test27" $ TestCase (assertEqual "eq" [(R1,[(1,MouseClick),(3,Alarm)])]                 (detectME det19 event_stream8))
+  , TestLabel "test27" $ TestCase (assertEqual "eq" [(R1,[(3,KeyPress),(2,KeyPress)])]                (detectME det18 event_stream9))
+  , TestLabel "test28" $ TestCase (assertEqual "eq" []                                                (detectME det19 event_stream9))
+  ]
+
+
+main = do
+        runTestTT tests_suite1
+        runTestTT tests_suite2
+        -- putStrLn $ show $ detectME det3 event_stream2

@@ -1,0 +1,12 @@
+.*.swp
+.hpc/
+*.hi
+*.hs
+*.hs.html
+*.o
+*.tix
+hpc_index.html
+hpc_index_alt.html
+hpc_index_exp.html
+hpc_index_fun.html
+/Main
