@@ -112,8 +112,10 @@ makeDetector (LastRestr   j t) = DLastRestr   (makeDetector j) t                
 
 starting_later :: Instance -> Instance -> Instance
 starting_later a b | start(a) <   start(b) = b
-                | start(a) >=  start(b) = a
+                   | start(a) >=  start(b) = a
 
+all_possible_starts :: [Time] -> [Instance] -> [Time]
+all_possible_starts ts is = filter (/= (-1)) $ union ts (map start is)
 
 observe :: Detector -> Instance -> Detector
 observe d [] = d
@@ -131,7 +133,7 @@ observe (DDisjunction j k st) ev =
         ss_j = (ss_i . state) j'
         ss_k = (ss_i . state) k'
         a_i' = starting_later a_k a_j
-        ss_i' = union ss_j ss_k
+        ss_i' = all_possible_starts (union ss_j ss_k) []
     in DDisjunction j' k' st{a_i = a_i', ss_i = ss_i'}
 
 observe (DConjunction j k st) ev =
@@ -147,7 +149,7 @@ observe (DConjunction j k st) ev =
                                                 else l_i' `iJoin` a_k
         ss_j = (ss_i . state) j'
         ss_k = (ss_i . state) k'
-        ss_i' = delete (-1) (union (union ss_j ss_k) [start l_i', start r_i'])
+        ss_i' = all_possible_starts (union ss_j ss_k) [l_i', r_i']
     in DConjunction j' k' st{a_i = a_i', ss_i = ss_i', l_i = l_i', r_i = r_i'}
 
 observe (DNegation j k st) ev =
@@ -175,7 +177,7 @@ observe (DSequence j k st) ev =
         qq_i' = foldl union [] $ [map (\t -> foldl (latest_prec t) [] (union (qq_i st) [l_i st])) ss_k]
 
         l_i' = starting_later (l_i st) a_j
-        ss_i' = delete (-1) (ss_j `union` map start (union (qq_i') [l_i']))
+        ss_i' = all_possible_starts ss_j (union (qq_i') [l_i'])
 
     in (DSequence j' k' st{a_i = a_i', qq_i=qq_i', l_i=l_i', ss_i=ss_i'})
 
@@ -200,10 +202,14 @@ observe (DLastRestr j dur st) ev@[(cur_t, _)] =
         qq_i' = delete a_i' $ filter (\e -> end e >= cur_t - dur) (union (qq_i st) [l_i st])
 
         l_i' = if a_i' /= [] then [] else (if start (l_i st) < start a_j then a_j else (l_i st))
-        ss_i' = delete (-1) (ss_j `union` map start (union (qq_i') [l_i']))
+        ss_i' = all_possible_starts ss_j (union (qq_i') [l_i'])
 
     in (DLastRestr j' dur st{a_i = a_i', qq_i=qq_i', l_i=l_i', ss_i=ss_i'})
 
+
+-- ----------------------------------------------------------------------
+-- ----------------------------------------------------------------------
+-- ----------------------------------------------------------------------
 
 
 -- detect :: Detector -> [Instance] -> [Maybe Instance]
