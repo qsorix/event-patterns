@@ -9,6 +9,7 @@
 module Main where
 
 import Data.List
+import Data.Function (on)
 import Test.HUnit
 
 type Time     = Int
@@ -120,7 +121,9 @@ all_possible_starts ts is = filter (/= (-1)) $ union ts (map start is)
 latest_preceding :: Time -> [Instance] -> Instance
 latest_preceding t is =
     let preceding = filter ((< t) . end) is
-    in  maximumBy (compare `on` start) preceding
+    in if preceding == []
+            then []
+            else maximumBy (compare `on` start) preceding
 
 observe :: Detector -> Instance -> Detector
 observe d [] = d
@@ -175,11 +178,10 @@ observe (DSequence j k st) ev =
         ss_j = (ss_i . state) j'
         ss_k = (ss_i . state) k'
 
-        latest_prec t e' e = if end e < t && start e' < start e then e else e'
-        e' = foldl (latest_prec (start a_k)) [] (union (qq_i st) [l_i st])
+        e' = latest_preceding (start a_k) (union (qq_i st) [l_i st])
         a_i' = if e' /= [] then a_k `iJoin` e' else []
 
-        qq_i' = foldl union [] $ [map (\t -> foldl (latest_prec t) [] (union (qq_i st) [l_i st])) ss_k]
+        qq_i' = foldl union [] $ [map (\t -> latest_preceding t (union (qq_i st) [l_i st])) ss_k]
 
         l_i' = starting_later (l_i st) a_j
         ss_i' = all_possible_starts ss_j (union (qq_i') [l_i'])
@@ -200,8 +202,7 @@ observe (DLastRestr j dur st) ev@[(cur_t, _)] =
         a_j = (a_i . state) j'
         ss_j = (ss_i . state) j'
 
-        latest_prec t e' e = if end e < t && start e' < start e then e else e'
-        e' = foldl (latest_prec (start ev - dur)) [] (union (qq_i st) [l_i st])
+        e' = latest_preceding (start ev - dur) (union (qq_i st) [l_i st])
         a_i' = if e' /= [] then ev `iJoin` e' else []
 
         qq_i' = delete a_i' $ filter (\e -> end e >= cur_t - dur) (union (qq_i st) [l_i st])
