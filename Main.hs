@@ -25,6 +25,7 @@ data Event = MouseClick
            | KeyPress
            | Alarm
            | Tick
+           | AuxTick
            deriving (Show, Eq)
 
 data EventExpr = E Event
@@ -118,12 +119,14 @@ starting_later a b | start(a) <   start(b) = b
 all_possible_starts :: [Time] -> [Instance] -> [Time]
 all_possible_starts ts is = filter (/= (-1)) $ union ts (map start is)
 
+latest :: [Instance] -> Instance
+latest [] = []
+latest is = maximumBy (compare `on` start) is
+
 latest_preceding :: Time -> [Instance] -> Instance
 latest_preceding t is =
     let preceding = filter ((< t) . end) is
-    in if preceding == []
-            then []
-            else maximumBy (compare `on` start) preceding
+    in  latest preceding
 
 observe :: Detector -> Instance -> Detector
 observe d [] = d
@@ -202,15 +205,17 @@ observe (DLastRestr j dur st) ev@[(cur_t, _)] =
         a_j = (a_i . state) j'
         ss_j = (ss_i . state) j'
 
-        e' = latest_preceding (start ev - dur) (union (qq_i st) [l_i st])
-        a_i' = if e' /= [] then ev `iJoin` e' else []
+        now = cur_t
+        (ready, not_ready) = partition ((< now-dur).end) (union (qq_i st) [a_j])
 
-        qq_i' = delete a_i' $ filter (\e -> end e >= cur_t - dur) (union (qq_i st) [l_i st])
+        e' = latest ready
+        a_i' = if e' /= [] then [(end e'+dur, AuxTick)] `iJoin` e' else [] -- FIXME: synthesize TIME_TICK?
 
-        l_i' = if a_i' /= [] then [] else (if start (l_i st) < start a_j then a_j else (l_i st))
-        ss_i' = all_possible_starts ss_j (union (qq_i') [l_i'])
+        qq_i' = not_ready
 
-    in (DLastRestr j' dur st{a_i = a_i', qq_i=qq_i', l_i=l_i', ss_i=ss_i'})
+        ss_i' = all_possible_starts ss_j qq_i'
+
+    in (DLastRestr j' dur st{a_i = a_i', qq_i=qq_i', ss_i=ss_i'})
 
 
 -- ----------------------------------------------------------------------
@@ -315,13 +320,13 @@ det19 = [((E MouseClick .+ E Alarm) .- (E KeyPress .> E KeyPress), R1)]
 
 
 tests_suite2 = TestList
-  [ TestLabel "test22" $ TestCase (assertEqual "eq" [(R1,[(19,Tick),(15,Alarm),(10,Tick),(6,Alarm)])] (detectME det14 event_stream7))
-  , TestLabel "test23" $ TestCase (assertEqual "eq" [(R1, [(5,Tick),(1,Alarm)]),
-                                                     (R1,[(10,Tick),(6,Alarm)]),
-                                                     (R1, [(19,Tick),(15,Alarm)])]                    (detectME det16 event_stream7))
-  , TestLabel "test24" $ TestCase (assertEqual "eq" [(R1,[(10,Tick),(6,Alarm)]),
-                                                     (R1,[(19,Tick),(15,Alarm)]),
-                                                     (R1,[(21,KeyPress),(17,Alarm)])]                 (detectME det15 event_stream7))
+  [ TestLabel "test22" $ TestCase (assertEqual "eq" [(R1,[(18,AuxTick),(15,Alarm),(8,AuxTick),(6,Alarm)])] (detectME det14 event_stream7))
+  , TestLabel "test23" $ TestCase (assertEqual "eq" [(R1, [(4,AuxTick),(1,Alarm)]),
+                                                     (R1,[(9,AuxTick),(6,Alarm)]),
+                                                     (R1, [(18,AuxTick),(15,Alarm)])]                 (detectME det16 event_stream7))
+  , TestLabel "test24" $ TestCase (assertEqual "eq" [(R1,[(9,AuxTick),(6,Alarm)]),
+                                                     (R1,[(18,AuxTick),(15,Alarm)]),
+                                                     (R1,[(20,AuxTick),(17,Alarm)])]                 (detectME det15 event_stream7))
   , TestLabel "test25" $ TestCase (assertEqual "eq" []                                                (detectME det17 event_stream7))
   , TestLabel "test26" $ TestCase (assertEqual "eq" [(R1,[(4,KeyPress),(2,KeyPress)])]                (detectME det18 event_stream8))
   , TestLabel "test27" $ TestCase (assertEqual "eq" [(R1,[(1,MouseClick),(3,Alarm)])]                 (detectME det19 event_stream8))
@@ -329,8 +334,23 @@ tests_suite2 = TestList
   , TestLabel "test28" $ TestCase (assertEqual "eq" []                                                (detectME det19 event_stream9))
   ]
 
+event_stream10 = [1@@MouseClick, 2@@KeyPress, 4@@Alarm]
+
+det20 = [((E MouseClick .> E Alarm) .| (E KeyPress .> E Alarm), R1)]
+det21 = [((E KeyPress .> E Alarm) .| (E MouseClick .> E Alarm), R1)]
+
+det22 = [((E MouseClick .+ (E KeyPress .| E Alarm)), R1)]
+
+tests_suite3 = TestList
+  [ TestLabel "test29" $ TestCase (assertEqual "eq" [(R1,[(4,Alarm),(2,KeyPress)])] (detectME det20 event_stream10))
+  , TestLabel "test30" $ TestCase (assertEqual "eq" [(R1,[(4,Alarm),(2,KeyPress)])] (detectME det21 event_stream10))
+  , TestLabel "test31" $ TestCase (assertEqual "eq" [(R1,[(1,MouseClick),(2,KeyPress)]),
+                                                     (R1,[(1,MouseClick),(4,Alarm)])] (detectME det22 event_stream10))
+  ]
+
 
 main = do
         runTestTT tests_suite1
         runTestTT tests_suite2
+        runTestTT tests_suite3
         -- putStrLn $ show $ detectME det3 event_stream2
